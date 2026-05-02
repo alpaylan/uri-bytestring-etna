@@ -1,0 +1,22 @@
+From: Etna Workload <noreply@example.com>
+Subject: [PATCH] normalization_segs_empty_slash_f52a33f - segs==[""] case missing
+
+Re-injection of the bug fixed by upstream commit
+f52a33fb02f31ca8a701d42bdc7335e58bb4630b ("Fix normalization bug").
+With httpNormalization, a URI of the form "http://host/?q" splits its
+path "/" into segs=[""], which the buggy normalizeRelativeRef collapses
+into the empty string, dropping the slash between authority and query.
+Reversing the patch removes the segs==[""] guard.
+
+diff --git b/src/URI/ByteString/Internal.hs a/src/URI/ByteString/Internal.hs
+index 3570f66..50a7e6b 100644
+--- b/src/URI/ByteString/Internal.hs
++++ a/src/URI/ByteString/Internal.hs
+@@ -205,6 +205,7 @@ normalizeRelativeRef o@URINormalizationOptions {..} mScheme RelativeRef {..} =
+   where
+     path
+       | unoSlashEmptyPath && BS.null rrPath = BB.fromByteString "/"
++      | segs == [""] = BB.fromByteString "/"
+       | otherwise = mconcat (intersperse (c8 '/') (map urlEncodePath segs))
+     segs = dropSegs (BS.split slash (pathRewrite rrPath))
+     pathRewrite

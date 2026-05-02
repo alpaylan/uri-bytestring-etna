@@ -13,3 +13,8 @@ cabal.sandbox.config
 cabal.config
 .stack-work
 stack.yaml.lock
+
+# etna runner local artefacts
+etna.log
+progress.jsonl
+.hegel/

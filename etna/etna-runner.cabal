@@ -1,0 +1,54 @@
+cabal-version:      3.0
+name:               etna-runner
+version:            0.1.0
+synopsis:           ETNA runner for uri-bytestring workload
+build-type:         Simple
+
+library
+    exposed-modules:
+        Etna.Result
+        Etna.Properties
+        Etna.Witnesses
+        Etna.Gens.QuickCheck
+        Etna.Gens.Hedgehog
+        Etna.Gens.Falsify
+        Etna.Gens.SmallCheck
+    hs-source-dirs:   src
+    default-language: Haskell2010
+    build-depends:
+        base               >=4.14 && <5,
+        bytestring,
+        containers,
+        QuickCheck         >=2.14,
+        hedgehog           >=1.4,
+        falsify            >=0.2,
+        smallcheck         >=1.2,
+        uri-bytestring
+    ghc-options:        -Wall
+
+executable etna-runner
+    main-is:          Main.hs
+    hs-source-dirs:   app
+    default-language: Haskell2010
+    build-depends:
+        base,
+        bytestring,
+        etna-runner,
+        QuickCheck         >=2.14,
+        hedgehog           >=1.4,
+        falsify            >=0.2,
+        smallcheck         >=1.2,
+        uri-bytestring,
+        time,
+        data-default
+    ghc-options:        -Wall
+
+test-suite etna-witnesses
+    type:             exitcode-stdio-1.0
+    main-is:          Witnesses.hs
+    hs-source-dirs:   test
+    default-language: Haskell2010
+    build-depends:
+        base,
+        etna-runner
+    ghc-options:        -Wall

@@ -1,0 +1,25 @@
+From: Etna Workload <noreply@example.com>
+Subject: [PATCH] userinfo_missing_at_749eda6 — serializeUserInfo dropped trailing '@'
+
+Hand-crafted re-injection of the bug fixed by upstream commit
+749eda6df2d4e8647f556c51e5e3bf55e12e1fdf ("Fix serialization bug with
+userinfo"). Forward-applying this patch leaves base unchanged; reversing
+it removes the trailing '@' character from the serialized userinfo,
+restoring the original bug.
+
+---
+ src/URI/ByteString/Internal.hs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/URI/ByteString/Internal.hs b/src/URI/ByteString/Internal.hs
+--- a/src/URI/ByteString/Internal.hs
++++ b/src/URI/ByteString/Internal.hs
+@@ -335,7 +335,7 @@
+
+ -------------------------------------------------------------------------------
+ serializeUserInfo :: UserInfo -> Builder
+-serializeUserInfo UserInfo {..} = bs uiUsername <> c8 ':' <> bs uiPassword
++serializeUserInfo UserInfo {..} = bs uiUsername <> c8 ':' <> bs uiPassword <> c8 '@'
+
+ serializeUserInfo' :: UserInfo -> ByteString
+ serializeUserInfo' = BB.toByteString . serializeUserInfo

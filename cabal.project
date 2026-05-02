@@ -1,0 +1,5 @@
+packages:
+    .
+    etna/
+
+with-compiler: /Users/akeles/.ghcup/ghc/9.6.6/bin/ghc

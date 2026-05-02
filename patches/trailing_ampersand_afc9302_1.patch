@@ -1,0 +1,23 @@
+From: Etna Workload <noreply@example.com>
+Subject: [PATCH] trailing_ampersand_afc9302 - sepBy' admitted empty trailing pair
+
+Re-injection of the bug fixed by upstream commit
+afc9302ca80beec70d4382f58fb870afa8dbe9b6 ("Fixed bug with trailing
+ampersands"). The fixed parser filters empty-key pairs out of the
+parsed Query; reversing the patch removes the filter (and its neQuery
+helper) so a trailing '&' yields a ("","") pair in the query.
+
+diff --git b/src/URI/ByteString/Internal.hs a/src/URI/ByteString/Internal.hs
+index 1454fea..50a7e6b 100644
+--- b/src/URI/ByteString/Internal.hs
++++ a/src/URI/ByteString/Internal.hs
+@@ -640,7 +640,8 @@ queryParser opts = do
+       | otherwise -> fail' MalformedPath
+     _ -> pure mempty
+   where
+-    itemsParser = Query <$> A.sepBy' (queryItemParser opts) (word8' ampersand)
++    itemsParser = Query . filter neQuery <$> A.sepBy' (queryItemParser opts) (word8' ampersand)
++    neQuery (k, _) = not (BS.null k)
+ 
+ -------------------------------------------------------------------------------
+ 

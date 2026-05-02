@@ -1,0 +1,189 @@
+name = "uri-bytestring"
+description = "RFC 3986 URI parser/serializer over ByteStrings (Soostone/uri-bytestring). Bug fixes mined from upstream history; modern HEAD is the base, each patch reverse-applies a fix to install the original bug."
+language = "haskell"
+strategies = ["quickcheck", "hedgehog", "falsify", "smallcheck"]
+crate = "uri-bytestring"
+base_commit = "f2f3b5e0897bb18d4e884b1cb0ac20ccefd6618f"
+
+# ---------------------------------------------------------------------------
+# Variant: userinfo_missing_at_749eda6_1
+# ---------------------------------------------------------------------------
+[[tasks]]
+mutations = ["userinfo_missing_at_749eda6_1"]
+
+[tasks.source]
+repo = "https://github.com/Soostone/uri-bytestring"
+commits = ["749eda6df2d4e8647f556c51e5e3bf55e12e1fdf"]
+commit_subjects = ["Fix serialization bug with userinfo"]
+origin = "internal"
+summary = "serializeUserInfo emitted '<user>:<pass>' with no trailing '@', so a serialized URI omitted the separator between userinfo and the host. Reversing the fix restores the original bug."
+
+[tasks.injection]
+kind = "patch"
+files = ["src/URI/ByteString/Internal.hs"]
+locations = [{ file = "src/URI/ByteString/Internal.hs", line = 338, symbol = "serializeUserInfo" }]
+patch = "patches/userinfo_missing_at_749eda6_1.patch"
+
+[tasks.bug]
+short_name = "userinfo_serialize_missing_at"
+invariant = "For any URI containing userinfo, parseURI strict (serializeURIRef' uri) must yield a URI equal to the original."
+how_triggered = "Reverse-applying the patch removes the trailing '<> c8 '@'' from serializeUserInfo. A URI with userinfo serializes to '<scheme>://<user>:<pass><host>...' which the strict parser rejects (or re-parses with the userinfo absorbed into the host)."
+
+[[tasks.tasks]]
+property = "RoundTripUri"
+witnesses = [
+  { test_fn = "witness_round_trip_uri_case_userinfo", note = "URI http://alice:secret@example.com/path must round-trip" },
+]
+
+# ---------------------------------------------------------------------------
+# Variant: authority_missing_double_slash_ac784c3_1
+# ---------------------------------------------------------------------------
+[[tasks]]
+mutations = ["authority_missing_double_slash_ac784c3_1"]
+
+[tasks.source]
+repo = "https://github.com/Soostone/uri-bytestring"
+commits = ["ac784c373ef013046ddcb08f73fdc1af0f0272a1"]
+commit_subjects = ["Fix resialisation of authority"]
+origin = "internal"
+summary = "serializeAuthority did not emit the leading '//' before host; serializeURI compensated by emitting 'scheme://' rather than 'scheme:'. The fix moves '//' into serializeAuthority where it belongs and keeps serializeURI emitting the bare ':' separator. Reversing the patch reinstates both halves of the bug."
+
+[tasks.injection]
+kind = "patch"
+files = ["src/URI/ByteString/Internal.hs"]
+locations = [
+  { file = "src/URI/ByteString/Internal.hs", line = 193, symbol = "normalizeURI" },
+  { file = "src/URI/ByteString/Internal.hs", line = 313, symbol = "serializeAuthority" },
+]
+patch = "patches/authority_missing_double_slash_ac784c3_1.patch"
+
+[tasks.bug]
+short_name = "authority_serialize_missing_double_slash"
+invariant = "parseRelativeRef strict (serializeURIRef' rr) must equal rr for any RelativeRef with authority."
+how_triggered = "Reversing the patch makes normalizeURI emit '<scheme>://' AND serializeAuthority drop the '//' prefix. For absolute URIs the two changes self-compensate (the joined output is unchanged), so the bug only surfaces for RelativeRefs: a relrr serializes without the leading '//' and re-parses as a path-only URI."
+
+[[tasks.tasks]]
+property = "RelRefRoundTrip"
+witnesses = [
+  { test_fn = "witness_rel_ref_round_trip_case_double_slash", note = "RelativeRef //example.org:1234/api/v1 must round-trip" },
+]
+
+# ---------------------------------------------------------------------------
+# Variant: relative_ref_drops_port_83adbc7_1
+# ---------------------------------------------------------------------------
+[[tasks]]
+mutations = ["relative_ref_drops_port_83adbc7_1"]
+
+[tasks.source]
+repo = "https://github.com/Soostone/uri-bytestring"
+commits = ["83adbc78cc64438a6d4fd4975e900f935baaee7c"]
+commit_subjects = ["Fix bug: RelativeRef serialization dropped port"]
+origin = "internal"
+summary = "serializeAuthority's effectivePort was 'p <- authorityPort; scheme <- mScheme; dropPort scheme p'. For a RelativeRef there is no scheme, so mScheme is Nothing and the Maybe monad short-circuits, dropping the port unconditionally. The fix splits dropPort into Nothing/Just-Scheme cases so the Nothing case keeps the port."
+
+[tasks.injection]
+kind = "patch"
+files = ["src/URI/ByteString/Internal.hs"]
+locations = [{ file = "src/URI/ByteString/Internal.hs", line = 322, symbol = "serializeAuthority.effectivePort" }]
+patch = "patches/relative_ref_drops_port_83adbc7_1.patch"
+
+[tasks.bug]
+short_name = "relative_ref_drops_port"
+invariant = "parseRelativeRef strict (serializeURIRef' rr) must equal rr for any RelativeRef whose authority has a port set."
+how_triggered = "Reversing the patch reinstates the Maybe-Scheme threading. Serializing 'RelativeRef Just(Authority Nothing host (Just port)) ...' drops the port entirely, so the round-trip yields a port-less RelativeRef."
+
+[[tasks.tasks]]
+property = "RelRefRoundTrip"
+witnesses = [
+  { test_fn = "witness_rel_ref_round_trip_case_with_port", note = "RelativeRef //example.com:8080/path must round-trip" },
+]
+
+# ---------------------------------------------------------------------------
+# Variant: fragment_serialize_no_encode_8e7ef60_1
+# ---------------------------------------------------------------------------
+[[tasks]]
+mutations = ["fragment_serialize_no_encode_8e7ef60_1"]
+
+[tasks.source]
+repo = "https://github.com/Soostone/uri-bytestring"
+commits = ["8e7ef60bbb42773c2f9b93004dbfb61ab11dfe3a"]
+commit_subjects = ["Encode fragments on serialization"]
+origin = "internal"
+summary = "Fragment percent-decoding was added to the parser but the serializer continued to emit fragment bytes verbatim. URIs with fragments containing reserved or unsafe characters fail to round-trip because the serializer produces an invalid URI string."
+
+[tasks.injection]
+kind = "patch"
+files = ["src/URI/ByteString/Internal.hs"]
+locations = [{ file = "src/URI/ByteString/Internal.hs", line = 306, symbol = "serializeFragment" }]
+patch = "patches/fragment_serialize_no_encode_8e7ef60_1.patch"
+
+[tasks.bug]
+short_name = "fragment_serialize_no_pct_encode"
+invariant = "parseURI strict (serializeURIRef' uri) must equal uri for any URI whose fragment contains characters needing pct-encoding."
+how_triggered = "Reversing the patch flips serializeFragment from 'urlEncodeQuery s' to plain 'bs s'. A URI with a fragment containing a space (or any non-pchar character) serializes to an invalid URI string that the strict parser rejects."
+
+[[tasks.tasks]]
+property = "RoundTripUri"
+witnesses = [
+  { test_fn = "witness_round_trip_uri_case_fragment_special", note = "URI with fragment 'hello world' must round-trip" },
+]
+
+# ---------------------------------------------------------------------------
+# Variant: trailing_ampersand_afc9302_1
+# ---------------------------------------------------------------------------
+[[tasks]]
+mutations = ["trailing_ampersand_afc9302_1"]
+
+[tasks.source]
+repo = "https://github.com/Soostone/uri-bytestring"
+commits = ["afc9302ca80beec70d4382f58fb870afa8dbe9b6"]
+commit_subjects = ["Fixed bug with trailing ampersands"]
+origin = "internal"
+summary = "queryParser used 'sepBy' (queryItemParser opts) (word8' ampersand)' with no post-filter. A URI of the form '?a=b&' parses to queryPairs = [(\"a\",\"b\"),(\"\",\"\")] because sepBy' admits a trailing empty match. The fix filters out empty-key pairs."
+
+[tasks.injection]
+kind = "patch"
+files = ["src/URI/ByteString/Internal.hs"]
+locations = [{ file = "src/URI/ByteString/Internal.hs", line = 643, symbol = "queryParser.itemsParser" }]
+patch = "patches/trailing_ampersand_afc9302_1.patch"
+
+[tasks.bug]
+short_name = "trailing_ampersand_yields_empty_pair"
+invariant = "parseURI strict 'http://h.com/p?<pairs>&' must produce a Query with no empty-key pair."
+how_triggered = "Reversing the patch removes the 'filter neQuery' wrapper. parseURI 'http://example.com/p?a=b&' then yields uriQuery = Query [(\"a\",\"b\"),(\"\",\"\")] instead of Query [(\"a\",\"b\")]."
+
+[[tasks.tasks]]
+property = "QueryNoEmptyPair"
+witnesses = [
+  { test_fn = "witness_query_no_empty_pair_case_trailing_amp", note = "URI ending in '&' must not yield empty key/value pair" },
+]
+
+# ---------------------------------------------------------------------------
+# Variant: normalization_segs_empty_slash_f52a33f_1
+# ---------------------------------------------------------------------------
+[[tasks]]
+mutations = ["normalization_segs_empty_slash_f52a33f_1"]
+
+[tasks.source]
+repo = "https://github.com/Soostone/uri-bytestring"
+commits = ["f52a33fb02f31ca8a701d42bdc7335e58bb4630b"]
+commit_subjects = ["Fix normalization bug"]
+origin = "internal"
+summary = "normalizeRelativeRef's path-rendering chain handled the rrPath==\"\" case (under unoSlashEmptyPath) but not segs==[\"\"], which is what BS.split slash \"/\" produces under httpNormalization. A URI 'http://h/?q' normalized to 'http://h?q', losing the slash between authority and query."
+
+[tasks.injection]
+kind = "patch"
+files = ["src/URI/ByteString/Internal.hs"]
+locations = [{ file = "src/URI/ByteString/Internal.hs", line = 208, symbol = "normalizeRelativeRef.path" }]
+patch = "patches/normalization_segs_empty_slash_f52a33f_1.patch"
+
+[tasks.bug]
+short_name = "normalize_drops_root_path_slash"
+invariant = "normalizeURIRef' httpNormalization (URI{path=\"/\", query non-empty, fragment Nothing}) must contain '/?' between authority and query."
+how_triggered = "Reversing the patch removes the segs==[\"\"] guard from normalizeRelativeRef. Normalizing 'http://example.com/?x=y' under httpNormalization yields 'http://example.com?x=y' (no slash before '?')."
+
+[[tasks.tasks]]
+property = "NormalizeRootPathKept"
+witnesses = [
+  { test_fn = "witness_normalize_root_path_kept_case_root_with_query", note = "Normalizing http://example.com/?x=y must keep the slash" },
+]
