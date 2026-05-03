@@ -1,38 +1,22 @@
-From: Etna Workload <noreply@example.com>
-Subject: [PATCH] authority_missing_double_slash_ac784c3 — serializeAuthority dropped "//" prefix
-
-Hand-crafted re-injection of the bug fixed by upstream commit
-ac784c373ef013046ddcb08f73fdc1af0f0272a1 ("Fix resialisation of
-authority"). The original bug had `serializeURI` emit `scheme:` then
-`serializeAuthority` produce `userinfo<>host<>port` with no leading
-"//" — and the `:` was actually `://` in the URI assembly to compensate.
-
-Reversing this patch restores both halves of the bug: `normalizeURI`
-emits `scheme://` and `serializeAuthority` produces the bare
-authority body, which collapses for relative refs / queries / paths.
-
----
- src/URI/ByteString/Internal.hs | 4 ++--
- 1 file changed, 2 insertions(+), 2 deletions(-)
-
 diff --git a/src/URI/ByteString/Internal.hs b/src/URI/ByteString/Internal.hs
+index 50a7e6b..0daa97c 100644
 --- a/src/URI/ByteString/Internal.hs
 +++ b/src/URI/ByteString/Internal.hs
-@@ -190,7 +190,7 @@
+@@ -190,7 +190,7 @@ normalizeURIRef' o = BB.toByteString . normalizeURIRef o
  -------------------------------------------------------------------------------
  normalizeURI :: URINormalizationOptions -> URIRef Absolute -> Builder
  normalizeURI o@URINormalizationOptions {..} URI {..} =
--  scheme <> BB.fromString "://" <> normalizeRelativeRef o (Just uriScheme) rr
-+  scheme <> BB.fromString ":" <> normalizeRelativeRef o (Just uriScheme) rr
+-  scheme <> BB.fromString ":" <> normalizeRelativeRef o (Just uriScheme) rr
++  scheme <> BB.fromString "://" <> normalizeRelativeRef o (Just uriScheme) rr
    where
      scheme = bs (sCase (schemeBS uriScheme))
      sCase
-@@ -310,7 +310,7 @@
-
+@@ -310,7 +310,7 @@ serializeFragment' = BB.toByteString . serializeFragment
+ 
  -------------------------------------------------------------------------------
  serializeAuthority :: URINormalizationOptions -> Maybe Scheme -> Authority -> Builder
--serializeAuthority URINormalizationOptions {..} mScheme Authority {..} = userinfo <> bs host <> port
-+serializeAuthority URINormalizationOptions {..} mScheme Authority {..} = BB.fromString "//" <> userinfo <> bs host <> port
+-serializeAuthority URINormalizationOptions {..} mScheme Authority {..} = BB.fromString "//" <> userinfo <> bs host <> port
++serializeAuthority URINormalizationOptions {..} mScheme Authority {..} = userinfo <> bs host <> port
    where
      userinfo = maybe mempty serializeUserInfo authorityUserInfo
      host = hCase (hostBS authorityHost)

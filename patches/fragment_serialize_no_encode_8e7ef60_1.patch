@@ -1,25 +1,13 @@
-From: Etna Workload <noreply@example.com>
-Subject: [PATCH] fragment_serialize_no_encode_8e7ef60 — serializeFragment did not pct-encode
-
-Re-injection of the bug fixed by upstream commit
-8e7ef60bbb42773c2f9b93004dbfb61ab11dfe3a ("Encode fragments on
-serialization"). Reversing the patch restores the buggy serializer that
-emits the fragment body verbatim, breaking the round trip for any
-fragment containing characters that need pct-encoding.
-
----
- src/URI/ByteString/Internal.hs | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
 diff --git a/src/URI/ByteString/Internal.hs b/src/URI/ByteString/Internal.hs
+index 50a7e6b..1814b36 100644
 --- a/src/URI/ByteString/Internal.hs
 +++ b/src/URI/ByteString/Internal.hs
-@@ -303,7 +303,7 @@
-
+@@ -303,7 +303,7 @@ serializeQuery' opts = BB.toByteString . serializeQuery opts
+ 
  -------------------------------------------------------------------------------
  serializeFragment :: Maybe ByteString -> Builder
--serializeFragment = maybe mempty (\s -> c8 '#' <> bs s)
-+serializeFragment = maybe mempty (\s -> c8 '#' <> urlEncodeQuery s)
-
+-serializeFragment = maybe mempty (\s -> c8 '#' <> urlEncodeQuery s)
++serializeFragment = maybe mempty (\s -> c8 '#' <> bs s)
+ 
  serializeFragment' :: Maybe ByteString -> ByteString
  serializeFragment' = BB.toByteString . serializeFragment

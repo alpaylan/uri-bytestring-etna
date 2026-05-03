@@ -18,3 +18,9 @@ stack.yaml.lock
 etna.log
 progress.jsonl
 .hegel/
+/.hegel/
+/.marauders/
+/etna.log
+/progress.jsonl
+/dist-newstyle/
+/etna/dist-newstyle/

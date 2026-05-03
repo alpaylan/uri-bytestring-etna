@@ -1,0 +1,39 @@
+{
+  "setup_steps": [
+    {
+      "Command": {
+        "command": "cabal",
+        "args": [
+          "build",
+          "etna-runner",
+          "--with-compiler=ghc-9.6.6"
+        ]
+      }
+    }
+  ],
+  "build_steps": [],
+  "capabilities": {
+    "solve": [
+      {
+        "Command": {
+          "command": "cabal",
+          "args": [
+            "run",
+            "-v0",
+            "--with-compiler=ghc-9.6.6",
+            "etna-runner",
+            "--",
+            "${strategy}",
+            "${property}"
+          ],
+          "run_at": "${workload_path}",
+          "params": [
+            "workload_path",
+            "property",
+            "strategy"
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -1,30 +1,18 @@
-From: Etna Workload <noreply@example.com>
-Subject: [PATCH] relative_ref_drops_port_83adbc7 - Maybe-Scheme short-circuited port
-
-Re-injection of the bug fixed by upstream commit
-83adbc78cc64438a6d4fd4975e900f935baaee7c ("Fix bug: RelativeRef
-serialization dropped port"). The buggy effectivePort did
-"p <- authorityPort; scheme <- mScheme; dropPort scheme p", which
-short-circuits to Nothing whenever there is no scheme - i.e. for every
-RelativeRef. The fix splits dropPort into Nothing/Just-Scheme cases
-and threads mScheme through directly so the Nothing case keeps the
-port.
-
-diff --git b/src/URI/ByteString/Internal.hs a/src/URI/ByteString/Internal.hs
-index 07153e7..50a7e6b 100644
---- b/src/URI/ByteString/Internal.hs
-+++ a/src/URI/ByteString/Internal.hs
+diff --git a/src/URI/ByteString/Internal.hs b/src/URI/ByteString/Internal.hs
+index 50a7e6b..07153e7 100644
+--- a/src/URI/ByteString/Internal.hs
++++ b/src/URI/ByteString/Internal.hs
 @@ -320,10 +320,10 @@ serializeAuthority URINormalizationOptions {..} mScheme Authority {..} = BB.from
      port = maybe mempty packPort effectivePort
      effectivePort = do
        p <- authorityPort
--      scheme <- mScheme
--      dropPort scheme p
-+      dropPort mScheme p
+-      dropPort mScheme p
++      scheme <- mScheme
++      dropPort scheme p
      packPort (Port p) = c8 ':' <> BB.fromString (show p)
--    dropPort scheme
-+    dropPort Nothing = Just
-+    dropPort (Just scheme)
+-    dropPort Nothing = Just
+-    dropPort (Just scheme)
++    dropPort scheme
        | unoDropDefPort = dropPort' scheme
        | otherwise = Just
      dropPort' s p
