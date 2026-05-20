@@ -12,58 +12,94 @@ import Etna.Properties
 lowerAlpha :: [Char]
 lowerAlpha = ['a' .. 'z']
 
-unreservedChars :: [Char]
-unreservedChars = lowerAlpha ++ ['A' .. 'Z'] ++ ['0' .. '9'] ++ "-._~"
+alphaNumChars :: [Char]
+alphaNumChars = lowerAlpha ++ ['A' .. 'Z'] ++ ['0' .. '9']
 
-needsEncodingChars :: [Char]
-needsEncodingChars = " <>[]\\^`{|}\""
+unreservedChars :: [Char]
+unreservedChars = alphaNumChars ++ "-._~"
+
+subDelimsChars :: [Char]
+subDelimsChars = "!$&'()*+,;="
+
+pcharChars :: [Char]
+pcharChars = unreservedChars ++ subDelimsChars ++ ":@"
+
+wideAsciiChars :: [Char]
+wideAsciiChars =
+  unreservedChars ++ subDelimsChars ++ ":@/?" ++ " <>[]\\^`{|}\""
 
 genBs :: [Char] -> Int -> Int -> Gen ByteString
 genBs cs lo hi = do
   s <- Gen.string (Range.linear lo hi) (Gen.element cs)
   pure (BS8.pack s)
 
+genHostLabel :: Gen ByteString
+genHostLabel = do
+  hd  <- Gen.element alphaNumChars
+  rest <- genBs (alphaNumChars ++ "-") 0 11
+  pure (BS8.cons hd rest)
+
 genHost :: Gen ByteString
 genHost = do
-  l1 <- genBs lowerAlpha 1 6
-  hasDot <- Gen.bool
-  if hasDot
-    then do
-      l2 <- genBs lowerAlpha 1 4
-      pure (l1 <> "." <> l2)
-    else pure l1
+  numLabels <- Gen.int (Range.linear 1 3)
+  labels    <- traverse (const genHostLabel) [1 .. numLabels]
+  pure (BS8.intercalate "." labels)
 
 genScheme :: Gen ByteString
-genScheme = Gen.element ["http", "https", "ftp", "x"]
+genScheme = Gen.frequency
+  [ (3, Gen.element ["http", "https", "ftp", "ssh", "file"])
+  , (1, do
+        hd  <- Gen.element (lowerAlpha ++ ['A' .. 'Z'])
+        len <- Gen.int (Range.linear 0 5)
+        rest <- traverse (const (Gen.element alphaNumChars)) [1 .. len]
+        pure (BS8.pack (hd : rest)))
+  ]
 
 genPath :: Gen ByteString
-genPath = do
-  segs <- Gen.int (Range.linear 1 2)
-  pieces <- traverse (\_ -> genBs lowerAlpha 1 5) [1 .. segs]
-  pure ("/" <> BS8.intercalate "/" pieces)
+genPath = Gen.frequency
+  [ (1, pure "")
+  , (1, pure "/")
+  , (8, do
+        n <- Gen.int (Range.linear 1 5)
+        pieces <- traverse (const (genBs pcharChars 0 10)) [1 .. n]
+        pure ("/" <> BS8.intercalate "/" pieces))
+  ]
 
 genUserInfo :: Gen (Maybe (ByteString, ByteString))
 genUserInfo = Gen.frequency
-  [ (1, pure Nothing)
-  , (1, do
-        u <- genBs lowerAlpha 1 5
-        p <- genBs lowerAlpha 0 5
+  [ (2, pure Nothing)
+  , (3, do
+        u <- genBs unreservedChars 1 10
+        p <- genBs unreservedChars 0 10
         pure (Just (u, p)))
   ]
 
 genFragment :: Gen (Maybe ByteString)
 genFragment = Gen.frequency
-  [ (1, pure Nothing)
-  , (2, Just <$> genBs unreservedChars 0 6)
-  , (1, do
-        a <- genBs unreservedChars 1 3
-        b <- genBs unreservedChars 0 3
-        c <- Gen.element needsEncodingChars
-        pure (Just (a <> BS8.singleton c <> b)))
+  [ (2, pure Nothing)
+  , (3, Just <$> genBs unreservedChars 0 12)
+  , (2, Just <$> genBs wideAsciiChars 1 12)
   ]
+
+genQueryPairs :: Int -> Gen [(ByteString, ByteString)]
+genQueryPairs maxN = do
+  n <- Gen.int (Range.linear 0 maxN)
+  traverse
+    (const $ do
+        k <- genBs unreservedChars 1 8
+        v <- genBs (unreservedChars ++ "+") 0 10
+        pure (k, v))
+    [1 .. n]
 
 ------------------------------------------------------------------------------
 -- gen_round_trip_uri
+--
+-- Random absolute URI: random scheme, host (1-3 dotted labels), random
+-- userinfo (often present), random port (often present, full 16-bit
+-- range), random multi-segment path, 0-6 query pairs, and a fragment
+-- whose distribution sometimes draws from a wide ASCII pool. The
+-- userinfo-missing-@, authority-missing-//, and fragment-no-encode bugs
+-- surface organically when the random URI lands in their subspace.
 ------------------------------------------------------------------------------
 gen_round_trip_uri :: Gen UriArgs
 gen_round_trip_uri = do
@@ -72,17 +108,10 @@ gen_round_trip_uri = do
   host   <- genHost
   port   <- Gen.frequency
               [ (1, pure Nothing)
-              , (1, Just <$> Gen.int (Range.linear 1 65535))
+              , (3, Just <$> Gen.int (Range.linear 1 65535))
               ]
   path   <- genPath
-  qPairs <- do
-    n <- Gen.int (Range.linear 0 2)
-    traverse
-      (\_ -> do
-          k <- genBs lowerAlpha 1 4
-          v <- genBs unreservedChars 0 5
-          pure (k, v))
-      [1 .. n]
+  qPairs <- genQueryPairs 6
   frag   <- genFragment
   pure UriArgs
     { uaScheme = scheme
@@ -118,14 +147,8 @@ gen_query_no_empty_pair = do
   scheme <- genScheme
   host   <- genHost
   path   <- genPath
-  n      <- Gen.int (Range.linear 1 3)
-  pairs  <- traverse
-    (\_ -> do
-        k <- genBs lowerAlpha 1 4
-        v <- genBs unreservedChars 0 4
-        pure (k, v))
-    [1 .. n]
-  trail <- Gen.bool
+  pairs  <- genQueryPairs 6
+  trail  <- Gen.bool
   pure QueryArgs
     { qaScheme = scheme
     , qaHost   = host

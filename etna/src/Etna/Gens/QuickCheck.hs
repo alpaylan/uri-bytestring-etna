@@ -7,17 +7,33 @@ import qualified Test.QuickCheck as QC
 
 import Etna.Properties
 
--- | Lowercase ASCII letters used everywhere — strict-mode parser-safe.
+-- | Lowercase ASCII letters used for some narrow components.
 lowerAlpha :: [Char]
 lowerAlpha = ['a' .. 'z']
 
-unreservedChars :: [Char]
-unreservedChars = lowerAlpha ++ ['A' .. 'Z'] ++ ['0' .. '9'] ++ "-._~"
+-- | Alphanumeric ASCII (the safest superset for hosts/schemes).
+alphaNumChars :: [Char]
+alphaNumChars = lowerAlpha ++ ['A' .. 'Z'] ++ ['0' .. '9']
 
--- | Characters that are *not* pchar and so force url-encoding when
--- placed in a fragment. Triggers fragment_serialize_no_encode.
-needsEncodingChars :: [Char]
-needsEncodingChars = " <>[]\\^`{|}\""
+-- | RFC3986 unreserved chars: parser-safe in nearly every URI position.
+unreservedChars :: [Char]
+unreservedChars = alphaNumChars ++ "-._~"
+
+-- | Sub-delims + selected pchar extras. Legal inside path/query/userinfo
+-- segments. Adds breadth to query keys/values without pct-encoding.
+subDelimsChars :: [Char]
+subDelimsChars = "!$&'()*+,;="
+
+-- | Path-/query-segment chars (pchar minus pct-encoded escapes).
+pcharChars :: [Char]
+pcharChars = unreservedChars ++ subDelimsChars ++ ":@"
+
+-- | A wide ASCII pool that frequently lands on chars requiring percent
+-- encoding. Used for fragments so the gen organically explores bytes
+-- that the buggy serializer fails on, without hand-crafting bug bait.
+wideAsciiChars :: [Char]
+wideAsciiChars =
+  unreservedChars ++ subDelimsChars ++ ":@/?" ++ " <>[]\\^`{|}\""
 
 -- | Generate a short bytestring drawn from a character class.
 genBs :: [Char] -> Int -> Int -> QC.Gen ByteString
@@ -26,49 +42,84 @@ genBs cs lo hi = do
   cs' <- QC.vectorOf n (QC.elements cs)
   pure (BS8.pack cs')
 
+-- | An RFC3986-shaped host: 1-3 dot-separated alphanum labels, each
+-- 1-12 chars. The first char of each label is alphanum (parser-safe);
+-- the rest may include hyphen.
+genHostLabel :: QC.Gen ByteString
+genHostLabel = do
+  hd  <- QC.elements alphaNumChars
+  rest <- genBs (alphaNumChars ++ "-") 0 11
+  pure (BS8.cons hd rest)
+
 genHost :: QC.Gen ByteString
 genHost = do
-  -- e.g. "abc.de"
-  l1 <- genBs lowerAlpha 1 6
-  hasDot <- QC.elements [True, False]
-  if hasDot
-    then do
-      l2 <- genBs lowerAlpha 1 4
-      pure (l1 <> "." <> l2)
-    else pure l1
+  numLabels <- QC.choose (1 :: Int, 3)
+  labels <- QC.vectorOf numLabels genHostLabel
+  pure (BS8.intercalate "." labels)
 
+-- | Schemes are alphanum, must start with a letter.
 genScheme :: QC.Gen ByteString
-genScheme = QC.elements ["http", "https", "ftp", "x"]
+genScheme = QC.frequency
+  [ (3, QC.elements ["http", "https", "ftp", "ssh", "file"])
+  , (1, do
+        hd  <- QC.elements (lowerAlpha ++ ['A' .. 'Z'])
+        len <- QC.choose (0 :: Int, 5)
+        rest <- QC.vectorOf len (QC.elements alphaNumChars)
+        pure (BS8.pack (hd : rest)))
+  ]
 
+-- | Path: "" or 1-5 segments, each 0-10 pchar bytes. Always begins with
+-- '/' when non-empty. Wider than the upstream "1-2 alphabetic segments"
+-- so bugs that depend on path shape (e.g. authority/'/' boundary) are
+-- exercised on a broader distribution.
 genPath :: QC.Gen ByteString
-genPath = do
-  -- always begins with '/'; one or two segments
-  segs <- QC.choose (1 :: Int, 2)
-  pieces <- QC.vectorOf segs (genBs lowerAlpha 1 5)
-  pure ("/" <> BS8.intercalate "/" pieces)
+genPath = QC.frequency
+  [ (1, pure "")
+  , (1, pure "/")
+  , (8, do
+        n <- QC.choose (1 :: Int, 5)
+        pieces <- QC.vectorOf n (genBs pcharChars 0 10)
+        pure ("/" <> BS8.intercalate "/" pieces))
+  ]
 
 genUserInfo :: QC.Gen (Maybe (ByteString, ByteString))
 genUserInfo = QC.frequency
-  [ (1, pure Nothing)
-  , (1, do
-        u <- genBs lowerAlpha 1 5
-        p <- genBs lowerAlpha 0 5
+  [ (2, pure Nothing)
+  , (3, do
+        u <- genBs unreservedChars 1 10
+        p <- genBs unreservedChars 0 10
         pure (Just (u, p)))
   ]
 
 genFragment :: QC.Gen (Maybe ByteString)
 genFragment = QC.frequency
-  [ (1, pure Nothing)
-  , (2, Just <$> genBs unreservedChars 0 6)
-  , (1, do                                   -- triggers variant 4
-        a <- genBs unreservedChars 1 3
-        b <- genBs unreservedChars 0 3
-        c <- QC.elements needsEncodingChars
-        pure (Just (a <> BS8.singleton c <> b)))
+  [ (2, pure Nothing)
+    -- Most fragments are unreserved-only and round-trip cleanly.
+  , (3, Just <$> genBs unreservedChars 0 12)
+    -- Some draw from a wider ASCII pool that contains characters
+    -- requiring pct-encoding. The fragment-encoding bug surfaces
+    -- whenever the random fragment lands on one of those bytes.
+  , (2, Just <$> genBs wideAsciiChars 1 12)
   ]
+
+genQueryPairs :: Int -> QC.Gen [(ByteString, ByteString)]
+genQueryPairs maxN = do
+  n <- QC.choose (0 :: Int, maxN)
+  QC.vectorOf n $ do
+    k <- genBs unreservedChars 1 8
+    v <- genBs (unreservedChars ++ "+") 0 10
+    pure (k, v)
 
 ------------------------------------------------------------------------------
 -- gen_round_trip_uri
+--
+-- Draws an arbitrary absolute URI: random scheme, random host, random
+-- userinfo (often present), random port (often present, full 16-bit
+-- range), random multi-segment path, 0-6 query pairs, and a fragment
+-- whose distribution organically lands on bug-triggering bytes. The
+-- userinfo-missing-@, authority-missing-//, and fragment-no-encode bugs
+-- all surface whenever the random URI lands in their respective
+-- subspace.
 ------------------------------------------------------------------------------
 gen_round_trip_uri :: QC.Gen UriArgs
 gen_round_trip_uri = do
@@ -77,15 +128,10 @@ gen_round_trip_uri = do
   host   <- genHost
   port   <- QC.frequency
               [ (1, pure Nothing)
-              , (1, Just <$> QC.choose (1, 65535))
+              , (3, Just <$> QC.choose (1, 65535))
               ]
   path   <- genPath
-  qPairs <- do
-    n <- QC.choose (0 :: Int, 2)
-    QC.vectorOf n $ do
-      k <- genBs lowerAlpha 1 4
-      v <- genBs unreservedChars 0 5
-      pure (k, v)
+  qPairs <- genQueryPairs 6
   frag   <- genFragment
   pure UriArgs
     { uaScheme = scheme
@@ -99,6 +145,11 @@ gen_round_trip_uri = do
 
 ------------------------------------------------------------------------------
 -- gen_rel_ref_round_trip
+--
+-- Random RelativeRef with authority+port. The authority-//-missing and
+-- relative-ref-drops-port bugs both depend on the port being present
+-- and the URI being relative; this generator produces those by
+-- construction but otherwise lets the host/userinfo/port/path roam.
 ------------------------------------------------------------------------------
 gen_rel_ref_round_trip :: QC.Gen RelRefArgs
 gen_rel_ref_round_trip = do
@@ -115,18 +166,19 @@ gen_rel_ref_round_trip = do
 
 ------------------------------------------------------------------------------
 -- gen_query_no_empty_pair
+--
+-- Random URI built around a query of 0-6 pairs, with a 50/50 trailing
+-- ampersand. The trailing-ampersand bug surfaces whenever the gen lands
+-- on (qaTrail = True ∧ pairs non-empty), which the discard predicate in
+-- the property already filters appropriately.
 ------------------------------------------------------------------------------
 gen_query_no_empty_pair :: QC.Gen QueryArgs
 gen_query_no_empty_pair = do
   scheme <- genScheme
   host   <- genHost
   path   <- genPath
-  n      <- QC.choose (1 :: Int, 3)
-  pairs  <- QC.vectorOf n $ do
-    k <- genBs lowerAlpha 1 4
-    v <- genBs unreservedChars 0 4
-    pure (k, v)
-  trail <- QC.elements [True, False]
+  pairs  <- genQueryPairs 6
+  trail  <- QC.elements [True, False]
   pure QueryArgs
     { qaScheme = scheme
     , qaHost   = host
@@ -137,6 +189,10 @@ gen_query_no_empty_pair = do
 
 ------------------------------------------------------------------------------
 -- gen_normalize_root_path_kept
+--
+-- Property fixes uriPath="/" and uriQuery=∅ internally; the only free
+-- variable is the host. Widen by drawing arbitrary parser-valid hosts
+-- (1-3 dotted labels) instead of a single label.
 ------------------------------------------------------------------------------
 gen_normalize_root_path_kept :: QC.Gen NormArgs
 gen_normalize_root_path_kept = NormArgs <$> genHost

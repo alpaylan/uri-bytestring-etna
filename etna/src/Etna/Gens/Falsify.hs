@@ -16,80 +16,130 @@ ne (x:xs) = x :| xs
 lowerAlpha :: NonEmpty Char
 lowerAlpha = ne ['a' .. 'z']
 
+alphaNumChars :: NonEmpty Char
+alphaNumChars = ne (['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9'])
+
 unreservedChars :: NonEmpty Char
 unreservedChars = ne (['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9'] ++ "-._~")
 
-needsEncodingChars :: NonEmpty Char
-needsEncodingChars = ne " <>[]\\^`{|}\""
+subDelimsChars :: NonEmpty Char
+subDelimsChars = ne "!$&'()*+,;="
+
+pcharChars :: NonEmpty Char
+pcharChars =
+  ne (['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9']
+       ++ "-._~" ++ "!$&'()*+,;=" ++ ":@")
+
+wideAsciiChars :: NonEmpty Char
+wideAsciiChars =
+  ne (['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9']
+       ++ "-._~" ++ "!$&'()*+,;=" ++ ":@/?"
+       ++ " <>[]\\^`{|}\"")
+
+alphaNumPlusHyphen :: NonEmpty Char
+alphaNumPlusHyphen = ne (['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9'] ++ "-")
+
+unreservedPlusPlus :: NonEmpty Char
+unreservedPlusPlus = ne (['a' .. 'z'] ++ ['A' .. 'Z'] ++ ['0' .. '9'] ++ "-._~+")
+
+upperAlpha :: NonEmpty Char
+upperAlpha = ne (['a' .. 'z'] ++ ['A' .. 'Z'])
 
 genBs :: NonEmpty Char -> Word -> Word -> F.Gen ByteString
 genBs cs lo hi = do
   s <- F.list (FR.between (lo, hi)) (F.elem cs)
   pure (BS8.pack s)
 
+genHostLabel :: F.Gen ByteString
+genHostLabel = do
+  hd  <- F.elem alphaNumChars
+  rest <- genBs alphaNumPlusHyphen 0 11
+  pure (BS8.cons hd rest)
+
 genHost :: F.Gen ByteString
 genHost = do
-  l1 <- genBs lowerAlpha 1 6
-  hasDot <- F.bool True
-  if hasDot
-    then do
-      l2 <- genBs lowerAlpha 1 4
-      pure (l1 <> "." <> l2)
-    else pure l1
+  numLabels <- F.inRange (FR.between (1 :: Int, 3))
+  labels    <- traverse (const genHostLabel) [1 .. numLabels]
+  pure (BS8.intercalate "." labels)
 
 genScheme :: F.Gen ByteString
-genScheme = F.elem (ne ["http", "https", "ftp", "x"])
+genScheme = do
+  pick <- F.inRange (FR.between (0 :: Int, 3))
+  case pick of
+    0 -> F.elem (ne ["http", "https", "ftp", "ssh", "file"])
+    1 -> F.elem (ne ["http", "https", "ftp", "ssh", "file"])
+    2 -> F.elem (ne ["http", "https", "ftp", "ssh", "file"])
+    _ -> do
+        hd  <- F.elem upperAlpha
+        len <- F.inRange (FR.between (0 :: Word, 5))
+        rest <- F.list (FR.between (len, len)) (F.elem alphaNumChars)
+        pure (BS8.pack (hd : rest))
 
 genPath :: F.Gen ByteString
 genPath = do
-  segs <- F.inRange (FR.between (1 :: Int, 2))
-  pieces <- traverse (\_ -> genBs lowerAlpha 1 5) [1 .. segs]
-  pure ("/" <> BS8.intercalate "/" pieces)
+  pick <- F.inRange (FR.between (0 :: Int, 9))
+  case pick of
+    0 -> pure ""
+    1 -> pure "/"
+    _ -> do
+      n <- F.inRange (FR.between (1 :: Int, 5))
+      pieces <- traverse (const (genBs pcharChars 0 10)) [1 .. n]
+      pure ("/" <> BS8.intercalate "/" pieces)
 
 genUserInfo :: F.Gen (Maybe (ByteString, ByteString))
 genUserInfo = do
-  hasIt <- F.bool True
-  if hasIt
-    then do
-      u <- genBs lowerAlpha 1 5
-      p <- genBs lowerAlpha 0 5
+  pick <- F.inRange (FR.between (0 :: Int, 4))
+  case pick of
+    0 -> pure Nothing
+    1 -> pure Nothing
+    _ -> do
+      u <- genBs unreservedChars 1 10
+      p <- genBs unreservedChars 0 10
       pure (Just (u, p))
-    else pure Nothing
 
 genFragment :: F.Gen (Maybe ByteString)
 genFragment = do
-  -- 0=Nothing, 1=normal unreserved, 2=with bug-trigger char
-  pick <- F.inRange (FR.between (0 :: Int, 3))
+  pick <- F.inRange (FR.between (0 :: Int, 6))
   case pick of
     0 -> pure Nothing
-    1 -> Just <$> genBs unreservedChars 0 6
-    2 -> Just <$> genBs unreservedChars 0 6
-    _ -> do
-      a <- genBs unreservedChars 1 3
-      b <- genBs unreservedChars 0 3
-      c <- F.elem needsEncodingChars
-      pure (Just (a <> BS8.singleton c <> b))
+    1 -> pure Nothing
+    2 -> Just <$> genBs unreservedChars 0 12
+    3 -> Just <$> genBs unreservedChars 0 12
+    4 -> Just <$> genBs unreservedChars 0 12
+    _ -> Just <$> genBs wideAsciiChars 1 12
+
+genQueryPairs :: Word -> F.Gen [(ByteString, ByteString)]
+genQueryPairs maxN = do
+  n <- F.inRange (FR.between (0, maxN))
+  traverse
+    (const $ do
+        k <- genBs unreservedChars 1 8
+        v <- genBs unreservedPlusPlus 0 10
+        pure (k, v))
+    [1 .. n]
 
 ------------------------------------------------------------------------------
 -- gen_round_trip_uri
+--
+-- Random absolute URI: random scheme, host (1-3 dotted labels), random
+-- userinfo (often present), random port (often present, full 16-bit
+-- range), random multi-segment path, 0-6 query pairs, and a fragment
+-- whose distribution sometimes draws from a wide ASCII pool that
+-- contains pct-encoding-required characters.
 ------------------------------------------------------------------------------
 gen_round_trip_uri :: F.Gen UriArgs
 gen_round_trip_uri = do
   scheme <- genScheme
   ui     <- genUserInfo
   host   <- genHost
-  hasPort <- F.bool True
+  hasPort <- do
+    p <- F.inRange (FR.between (0 :: Int, 3))
+    pure (p /= 0)
   port   <- if hasPort
               then Just <$> F.inRange (FR.between (1 :: Int, 65535))
               else pure Nothing
   path   <- genPath
-  n      <- F.inRange (FR.between (0 :: Int, 2))
-  qPairs <- traverse
-    (\_ -> do
-        k <- genBs lowerAlpha 1 4
-        v <- genBs unreservedChars 0 5
-        pure (k, v))
-    [1 .. n]
+  qPairs <- genQueryPairs 6
   frag   <- genFragment
   pure UriArgs
     { uaScheme = scheme
@@ -125,14 +175,8 @@ gen_query_no_empty_pair = do
   scheme <- genScheme
   host   <- genHost
   path   <- genPath
-  n      <- F.inRange (FR.between (1 :: Int, 3))
-  pairs  <- traverse
-    (\_ -> do
-        k <- genBs lowerAlpha 1 4
-        v <- genBs unreservedChars 0 4
-        pure (k, v))
-    [1 .. n]
-  trail <- F.bool True
+  pairs  <- genQueryPairs 6
+  trail  <- F.bool True
   pure QueryArgs
     { qaScheme = scheme
     , qaHost   = host

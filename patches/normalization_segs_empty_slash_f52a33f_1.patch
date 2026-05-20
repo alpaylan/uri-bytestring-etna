@@ -1,12 +1,12 @@
 diff --git a/src/URI/ByteString/Internal.hs b/src/URI/ByteString/Internal.hs
-index 3570f66..50a7e6b 100644
+index 50a7e6b..3570f66 100644
 --- a/src/URI/ByteString/Internal.hs
 +++ b/src/URI/ByteString/Internal.hs
-@@ -205,6 +205,7 @@ normalizeRelativeRef o@URINormalizationOptions {..} mScheme RelativeRef {..} =
+@@ -205,7 +205,6 @@ normalizeRelativeRef o@URINormalizationOptions {..} mScheme RelativeRef {..} =
    where
      path
        | unoSlashEmptyPath && BS.null rrPath = BB.fromByteString "/"
-+      | segs == [""] = BB.fromByteString "/"
+-      | segs == [""] = BB.fromByteString "/"
        | otherwise = mconcat (intersperse (c8 '/') (map urlEncodePath segs))
      segs = dropSegs (BS.split slash (pathRewrite rrPath))
      pathRewrite

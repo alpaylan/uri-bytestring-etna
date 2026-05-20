@@ -205,6 +205,7 @@ normalizeRelativeRef o@URINormalizationOptions {..} mScheme RelativeRef {..} =
   where
     path
       | unoSlashEmptyPath && BS.null rrPath = BB.fromByteString "/"
+      | segs == [""] = BB.fromByteString "/"
       | otherwise = mconcat (intersperse (c8 '/') (map urlEncodePath segs))
     segs = dropSegs (BS.split slash (pathRewrite rrPath))
     pathRewrite
